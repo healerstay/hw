@@ -14,7 +14,7 @@ bool check(const std::string& s, int& value) {
 
 int main(int argc, char* argv[]) {
     if (argc != 4) {
-        std::cout << "Usage: " << argv[0] << "int1 int2 int3" << std::endl;
+        std::cout << "Usage: " << argv[0] << " int1 int2 int3" << std::endl;
         return 1;
     }
 
