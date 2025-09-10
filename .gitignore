@@ -8,3 +8,4 @@
 *.class
 *.pyc
 /build/
+ENV-1.2/
