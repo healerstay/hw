@@ -1,0 +1,9 @@
+# Бинарные файлы
+*.exe
+*.dll
+*.so
+*.o
+*.a
+*.class
+*.pyc
+/build/
