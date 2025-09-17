@@ -20,7 +20,7 @@ int main() {
     sort(arr);
 
     std::cout << "\nAfter sort:  ";
-    for (auto c : arr) {
+    for (const auto& c : arr) {
         std::cout << c << "   ";
     }
     std::cout << std::endl;

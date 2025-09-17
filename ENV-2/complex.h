@@ -10,7 +10,7 @@ private:
 	double i;
 public:
 	Complex() : r(0.0), i(0.0) {}
-	Complex(const double& real, const  double& im) : r(real), i(im) {}
+	Complex(const double real, const double im) : r(real), i(im) {}
 
 	double real() const;
 	double imag() const;
