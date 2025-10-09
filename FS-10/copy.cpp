@@ -45,7 +45,19 @@ int main(int argc, char* argv[]) {
     off_t curr = 0;
     while (curr < file_end) {
         off_t data_curr = lseek(src, curr, SEEK_DATA);
-        if (data_curr == -1 || data_curr >= file_end) {
+        if (data_curr == -1) {
+            if (errno == ENXIO) {
+                hole += file_end - curr;
+                break;
+            } 
+            else {
+                std::cerr << "Error seeking data: " << strerror(errno) << std::endl;
+                close(src);
+                close(dst);
+                return 1;
+            }
+        }
+        if (data_curr >= file_end) {
             hole += file_end - curr;
             break;
         }
@@ -53,7 +65,7 @@ int main(int argc, char* argv[]) {
         if (data_curr > curr) {
             off_t hole_size = data_curr - curr;
             if (lseek(dst, hole_size, SEEK_CUR) == -1) {
-                std::cerr << "Error: " << strerror(errno) << std::endl;
+                std::cerr << "Error seeking cur: " << strerror(errno) << std::endl;
                 close(src);
                 close(dst);
                 return 1;
@@ -64,10 +76,15 @@ int main(int argc, char* argv[]) {
 
         off_t hole_curr = lseek(src, curr, SEEK_HOLE);
         if (hole_curr == -1) {
-            std::cerr << "Error: " << strerror(errno) << std::endl;
-            close(src);
-            close(dst);
-            return 1;
+            if (errno == ENXIO) {
+                hole_curr = file_end;
+            }     
+            else {
+                std::cerr << "Error seeking hole: " << strerror(errno) << std::endl;
+                close(src);
+                close(dst);
+                return 1;
+            }
         }
         
         off_t to_read = hole_curr - curr;
