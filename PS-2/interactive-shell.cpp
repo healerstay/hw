@@ -13,22 +13,26 @@ int exec_cmd(std::vector<char*>& args) {
     int fd = -1;
 
     for (int i = 0; i < args.size(); ++i) {
-        if (args[i] == nullptr) break;
+        if (args[i] == nullptr) {
+            break;
+        }
 
         if (strcmp(args[i], ">") == 0 || strcmp(args[i], ">>") == 0) {
             bool append = (strcmp(args[i], ">>") == 0);
             if (args[i + 1] == nullptr) {
-                if (!silent_mode)
+                if (!silent_mode) {
                     std::cerr << "Error: missing file name after '" << args[i] << "'" << std::endl;
+                }
                 return 1;
             }
             fd = open(args[i + 1],
                       O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC),
                       0644);
             if (fd == -1) {
-                if (!silent_mode)
+                if (!silent_mode) {
                     std::cerr << "Error opening file '" << args[i + 1]
                               << "': " << strerror(errno) << std::endl;
+                }
                 return 1;
             }
             args[i] = nullptr;
@@ -48,31 +52,36 @@ int exec_cmd(std::vector<char*>& args) {
 
     int pid = fork();
     if (pid < 0) {
-        if (!silent_mode)
+        if (!silent_mode) {
             std::cerr << "Error: fork failed: " << strerror(errno) << std::endl;
+        }
         return 1;
     }
     if (pid == 0) {
         if (fd != -1) {
             if (dup2(fd, 1) == -1) {
-                if (!silent_mode)
+                if (!silent_mode) {
                     std::cerr << "Error redirecting output: " << strerror(errno) << std::endl;
+                }
             }
             close(fd);
         }
         execvp(args[0], args.data());
-        if (!silent_mode)
+        if (!silent_mode) {
             std::cerr << "Error executing '" << args[0]
                       << "': " << strerror(errno) << std::endl;
+        }
         exit(1);
     } 
     else {
         int status;
         wait(&status);
-        if (WIFEXITED(status)) { 
+        if (WIFEXITED(status)) {
             return WEXITSTATUS(status);
         } 
-        else { return 1; }
+        else {
+            return 1;
+        }
     }
 }
 
@@ -82,13 +91,30 @@ int single_cmd(const std::string &cmd) {
     std::strcpy(cstr, cmd.c_str());
 
     char* token = std::strtok(cstr, " ");
+    bool local_silent = false;
+
+    if (token != nullptr && std::string(token) == "silent") {
+        local_silent = true;
+        token = std::strtok(nullptr, " ");
+    }
+
     while (token != nullptr) {
         args.push_back(token);
         token = std::strtok(nullptr, " ");
     }
     args.push_back(nullptr);
 
+    bool prev_silent = silent_mode;
+    if (local_silent) {
+        silent_mode = true;
+    }
+
     int result = exec_cmd(args);
+
+    if (local_silent) {
+        silent_mode = prev_silent;
+    }
+
     delete[] cstr;
     return result;
 }
@@ -103,10 +129,16 @@ int main(int argc, char* argv[]) {
     std::string line;
 
     while (true) {
-        if (!silent_mode) std::cout << "shell> " << std::flush;
+        if (!silent_mode) {
+            std::cout << "shell> " << std::flush;
+        }
         std::getline(std::cin, line);
-        if (line == "exit") { break; }
-        if (line.empty()) { continue; }
+        if (line == "exit") {
+            break;
+        }
+        if (line.empty()) {
+            continue;
+        }
 
         int last_status = 0;
         std::string prev_op = "";
@@ -135,19 +167,35 @@ int main(int argc, char* argv[]) {
             }
 
             std::string cmd = line.substr(pos, next - pos);
-            while (!cmd.empty() && cmd[0] == ' ') cmd.erase(0, 1);
-            while (!cmd.empty() && cmd.back() == ' ') cmd.pop_back();
+            while (!cmd.empty() && cmd[0] == ' ') {
+                cmd.erase(0, 1);
+            }
+            while (!cmd.empty() && cmd.back() == ' ') {
+                cmd.pop_back();
+            }
 
             if (!cmd.empty()) {
                 bool execute = true;
-                if (prev_op == "&&" && last_status != 0)  execute = false;
-                if (prev_op == "||" && last_status == 0) execute = false;
-                if (execute) last_status = single_cmd(cmd);
+                if (prev_op == "&&" && last_status != 0) {
+                    execute = false;
+                }
+                if (prev_op == "||" && last_status == 0) {
+                    execute = false;
+                }
+                if (execute) {
+                    last_status = single_cmd(cmd);
+                }
             }
 
-            if (op == "&&" || op == "||") pos = next + 2;
-            else if (op == ";") pos = next + 1;
-            else pos = line.size();
+            if (op == "&&" || op == "||") {
+                pos = next + 2;
+            }
+            else if (op == ";") {
+                pos = next + 1;
+            }
+            else {
+                pos = line.size();
+            }
 
             prev_op = op;
         }
