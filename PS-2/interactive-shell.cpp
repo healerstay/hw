@@ -7,8 +7,6 @@
 #include <vector>
 #include <cerrno>
 
-bool silent_mode = false;
-
 int exec_cmd(std::vector<char*>& args) {
     int fd = -1;
     bool redirect_to_log = false;
@@ -17,34 +15,6 @@ int exec_cmd(std::vector<char*>& args) {
         redirect_to_log = true;
         for (int i = 0; args[i] != nullptr; ++i) {
             args[i] = args[i + 1];
-        }
-    }
-
-    for (int i = 0; i < args.size(); ++i) {
-        if (args[i] == nullptr) {
-            break;
-        }
-
-        if (strcmp(args[i], ">") == 0 || strcmp(args[i], ">>") == 0) {
-            bool append = (strcmp(args[i], ">>") == 0);
-            if (args[i + 1] == nullptr) {
-                if (!silent_mode) {
-                    std::cerr << "Error: missing file name after '" << args[i] << "'" << std::endl;
-                }
-                return 1;
-            }
-            fd = open(args[i + 1],
-                      O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC),
-                      0644);
-            if (fd == -1) {
-                if (!silent_mode) {
-                    std::cerr << "Error opening file '" << args[i + 1]
-                              << "': " << strerror(errno) << std::endl;
-                }
-                return 1;
-            }
-            args[i] = nullptr;
-            break;
         }
     }
 
@@ -60,9 +30,7 @@ int exec_cmd(std::vector<char*>& args) {
 
     int pid = fork();
     if (pid < 0) {
-        if (!silent_mode) {
-            std::cerr << "Error: fork failed: " << strerror(errno) << std::endl;
-        }
+        std::cerr << "Error: fork failed: " << strerror(errno) << std::endl;
         return 1;
     }
 
@@ -77,19 +45,12 @@ int exec_cmd(std::vector<char*>& args) {
                 close(log_fd);
             }
         } else if (fd != -1) {
-            if (dup2(fd, 1) == -1) {
-                if (!silent_mode) {
-                    std::cerr << "Error redirecting output: " << strerror(errno) << std::endl;
-                }
-            }
+            dup2(fd, 1);
             close(fd);
         }
 
         execvp(args[0], args.data());
-        if (!silent_mode) {
-            std::cerr << "Error executing '" << args[0]
-                      << "': " << strerror(errno) << std::endl;
-        }
+        std::cerr << "Error executing '" << args[0] << "': " << strerror(errno) << std::endl;
         exit(1);
     } 
     else {
@@ -122,13 +83,11 @@ int single_cmd(const std::string &cmd) {
     return result;
 }
 
-int main(int argc, char* argv[]) {
+int main() {
     std::string line;
 
     while (true) {
-        if (!silent_mode) {
-            std::cout << "shell> " << std::flush;
-        }
+        std::cout << "shell> " << std::flush;
         std::getline(std::cin, line);
         if (line == "exit") {
             break;
