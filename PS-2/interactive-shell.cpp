@@ -11,6 +11,14 @@ bool silent_mode = false;
 
 int exec_cmd(std::vector<char*>& args) {
     int fd = -1;
+    bool redirect_to_log = false;
+
+    if (args[0] != nullptr && std::string(args[0]) == "silent") {
+        redirect_to_log = true;
+        for (int i = 0; args[i] != nullptr; ++i) {
+            args[i] = args[i + 1];
+        }
+    }
 
     for (int i = 0; i < args.size(); ++i) {
         if (args[i] == nullptr) {
@@ -57,8 +65,18 @@ int exec_cmd(std::vector<char*>& args) {
         }
         return 1;
     }
+
     if (pid == 0) {
-        if (fd != -1) {
+        if (redirect_to_log) {
+            pid_t child_pid = getpid();
+            std::string logname = std::to_string(child_pid) + ".log";
+            int log_fd = open(logname.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (log_fd != -1) {
+                dup2(log_fd, 1);
+                dup2(log_fd, 2);
+                close(log_fd);
+            }
+        } else if (fd != -1) {
             if (dup2(fd, 1) == -1) {
                 if (!silent_mode) {
                     std::cerr << "Error redirecting output: " << strerror(errno) << std::endl;
@@ -66,6 +84,7 @@ int exec_cmd(std::vector<char*>& args) {
             }
             close(fd);
         }
+
         execvp(args[0], args.data());
         if (!silent_mode) {
             std::cerr << "Error executing '" << args[0]
@@ -91,41 +110,19 @@ int single_cmd(const std::string &cmd) {
     std::strcpy(cstr, cmd.c_str());
 
     char* token = std::strtok(cstr, " ");
-    bool local_silent = false;
-
-    if (token != nullptr && std::string(token) == "silent") {
-        local_silent = true;
-        token = std::strtok(nullptr, " ");
-    }
-
     while (token != nullptr) {
         args.push_back(token);
         token = std::strtok(nullptr, " ");
     }
     args.push_back(nullptr);
 
-    bool prev_silent = silent_mode;
-    if (local_silent) {
-        silent_mode = true;
-    }
-
     int result = exec_cmd(args);
-
-    if (local_silent) {
-        silent_mode = prev_silent;
-    }
 
     delete[] cstr;
     return result;
 }
 
 int main(int argc, char* argv[]) {
-    for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--silent") == 0 || strcmp(argv[i], "-s") == 0) {
-            silent_mode = true;
-        }
-    }
-
     std::string line;
 
     while (true) {
