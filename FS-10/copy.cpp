@@ -1,7 +1,9 @@
 #include <iostream>
 #include <fcntl.h>
 #include <unistd.h>
+#include <sys/stat.h>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 
 constexpr size_t BUF_SIZE = 64 * 1024;
@@ -15,118 +17,151 @@ int main(int argc, char* argv[]) {
     const char* src_path = argv[1];
     const char* dst_path = argv[2];
 
-    int src = open(src_path, O_RDONLY);
-    if (src == -1) {
-        std::cerr << "Error: cannot open source file '" << src_path << "': " << strerror(errno) << std::endl;
+    int fd_src = open(src_path, O_RDONLY);
+    if (fd_src == -1) {
+        std::cerr << "Error: cannot open source file '" << src_path << "': " 
+                  << strerror(errno) << std::endl;
         return 1;
     }
 
-    int dst = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (dst == -1) {
+    struct stat st;
+    if (fstat(fd_src, &st) == -1) {
+        std::cerr << "Error: fstat failed: " << strerror(errno) << std::endl;
+        close(fd_src);
+        return 1;
+    }
+
+    off_t file_size = st.st_size;
+
+    int fd_dst = open(dst_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd_dst == -1) {
         std::cerr << "Error: cannot open destination file '" << dst_path << "': " << strerror(errno) << std::endl;
-        close(src);
+        close(fd_src);
         return 1;
     }
 
     char buffer[BUF_SIZE];
-    ssize_t data = 0;
-    ssize_t hole = 0;
+    off_t data_bytes = 0;
+    off_t hole_bytes = 0;
+    off_t offset = 0;
 
-    off_t file_end = lseek(src, 0, SEEK_END);
-    if (file_end == -1) {
-        std::cerr << "Error: " << strerror(errno) << std::endl;
-        close(src);
-        close(dst);
-        return 1;
+    bool seek_supported = true;
+    if (lseek(fd_src, 0, SEEK_DATA) == -1 && errno == ENXIO) {
+        seek_supported = false;
+    }
+    lseek(fd_src, 0, SEEK_SET);
+
+    if (!seek_supported) {
+        ssize_t total = 0;
+        while (true) {
+            ssize_t r = read(fd_src, buffer, BUF_SIZE);
+            if (r < 0) {
+                if (errno == ENXIO) { continue; }
+                std::cerr << "Read error: " << strerror(errno) << std::endl;
+                close(fd_src);
+                close(fd_dst);
+                return 1;
+            }
+            if (r == 0) { break; }
+
+            ssize_t written = 0;
+            while (written < r) {
+                ssize_t w = write(fd_dst, buffer + written, r - written);
+                if (w < 0) {
+                    if (errno == ENXIO) { continue; }
+                    std::cerr << "Write error: " << strerror(errno) << std::endl;
+                    close(fd_src);
+                    close(fd_dst);
+                    return 1;
+                }
+                written += w;
+            }
+            total += r;
+        }
+        std::cout << "Successfully copied " << total 
+                  << " bytes (data: " << total << ", hole: 0)" << std::endl;
+        close(fd_src);
+        close(fd_dst);
+        return 0;
     }
 
-    off_t curr = 0;
-    while (curr < file_end) {
-        off_t data_off = lseek(src, curr, SEEK_DATA);
-        off_t hole_off;
-
+    while (offset < file_size) {
+        off_t data_off = lseek(fd_src, offset, SEEK_DATA);
         if (data_off == -1) {
-            if (errno == ENXIO) {
-                off_t hole_size = file_end - curr;
-                if (hole_size > 0) {
-                    if (lseek(dst, hole_size, SEEK_CUR) == -1) {
-                        std::cerr << "Error seeking dst: " << strerror(errno) << std::endl;
-                        close(src);
-                        close(dst);
-                        return 1;
-                    }
-                    hole += hole_size;
-                }
-                break;
-            } else {
-                std::cerr << "Error seeking data: " << strerror(errno) << std::endl;
-                close(src);
-                close(dst);
-                return 1;
-            }
+            if (errno == ENXIO) { break; }
+            std::cerr << "SEEK_DATA error: " << strerror(errno) << std::endl;
+            close(fd_src);
+            close(fd_dst);
+            return 1;
         }
 
-        if (data_off > curr) {
-            off_t hole_size = data_off - curr;
-            if (lseek(dst, hole_size, SEEK_CUR) == -1) {
-                std::cerr << "Error seeking dst (hole): " << strerror(errno) << std::endl;
-                close(src);
-                close(dst);
+        if (data_off > offset) {
+            off_t hole_len = data_off - offset;
+            if (lseek(fd_dst, hole_len, SEEK_CUR) == -1) {
+                std::cerr << "Destination lseek error: " << strerror(errno) << std::endl;
+                close(fd_src);
+                close(fd_dst);
                 return 1;
             }
-            hole += hole_size;
-            curr = data_off;
+            hole_bytes += hole_len;
         }
 
-        hole_off = lseek(src, curr, SEEK_HOLE);
+        off_t hole_off = lseek(fd_src, data_off, SEEK_HOLE);
         if (hole_off == -1) {
-            if (errno == ENXIO)
-                hole_off = file_end;
-            else {
-                std::cerr << "Error seeking hole: " << strerror(errno) << std::endl;
-                close(src);
-                close(dst);
-                return 1;
-            }
+            std::cerr << "SEEK_HOLE error: " << strerror(errno) << std::endl;
+            close(fd_src);
+            close(fd_dst);
+            return 1;
         }
 
-        off_t to_copy = hole_off - curr;
+        off_t to_copy = hole_off - data_off;
+        if (lseek(fd_src, data_off, SEEK_SET) == -1) {
+            std::cerr << "Source lseek error: " << strerror(errno) << std::endl;
+            close(fd_src);
+            close(fd_dst);
+            return 1;
+        }
+
         while (to_copy > 0) {
             size_t chunk = (to_copy > BUF_SIZE) ? BUF_SIZE : to_copy;
-            ssize_t r = read(src, buffer, chunk);
+            ssize_t r = read(fd_src, buffer, chunk);
             if (r <= 0) {
                 std::cerr << "Read error: " << strerror(errno) << std::endl;
-                close(src);
-                close(dst);
+                close(fd_src);
+                close(fd_dst);
                 return 1;
             }
 
-            ssize_t w = write(dst, buffer, r);
-            if (w != r) {
-                std::cerr << "Write error: " << strerror(errno) << std::endl;
-                close(src);
-                close(dst);
-                return 1;
+            ssize_t written = 0;
+            while (written < r) {
+                ssize_t w = write(fd_dst, buffer + written, r - written);
+                if (w < 0) {
+                    if (errno == ENXIO) { continue; }
+                    std::cerr << "Write error: " << strerror(errno) << std::endl;
+                    close(fd_src);
+                    close(fd_dst);
+                    return 1;
+                }
+                written += w;
+                data_bytes += w;
             }
-
-            data += r;
-            curr += r;
             to_copy -= r;
         }
+        offset = hole_off;
     }
 
-    if (ftruncate(dst, file_end) == -1) {
+    if (file_size > 0 && ftruncate(fd_dst, file_size) == -1) {
         std::cerr << "Warning: ftruncate failed: " << strerror(errno) << std::endl;
     }
 
-    if (close(src) == -1)
+    if (close(fd_src) == -1) {
         std::cerr << "Close source failed: " << strerror(errno) << std::endl;
-    if (close(dst) == -1)
+    }
+    if (close(fd_dst) == -1) {
         std::cerr << "Close destination failed: " << strerror(errno) << std::endl;
+    }
 
-    std::cout << "Successfully copied " << data + hole
-              << " bytes (data: " << data << ", hole: " << hole << ")."
-              << std::endl;
+    std::cout << "Successfully copied " << file_size << " bytes (data: " << data_bytes << ", hole: " << hole_bytes << ")." << std::endl;
 
     return 0;
 }
