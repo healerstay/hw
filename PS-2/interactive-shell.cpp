@@ -5,6 +5,9 @@
 #include <cstdlib>
 #include <fcntl.h>
 #include <vector>
+#include <cerrno>
+
+bool silent_mode = false;
 
 int exec_cmd(std::vector<char*>& args) {
     int fd = -1;
@@ -12,28 +15,20 @@ int exec_cmd(std::vector<char*>& args) {
     for (int i = 0; i < args.size(); ++i) {
         if (args[i] == nullptr) break;
 
-        if (strcmp(args[i], ">") == 0) {
+        if (strcmp(args[i], ">") == 0 || strcmp(args[i], ">>") == 0) {
+            bool append = (strcmp(args[i], ">>") == 0);
             if (args[i + 1] == nullptr) {
-                std::cerr << "Error: missing file name after '>'" << std::endl;
+                if (!silent_mode)
+                    std::cerr << "Error: missing file name after '" << args[i] << "'" << std::endl;
                 return 1;
             }
-            fd = open(args[i + 1], O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            fd = open(args[i + 1],
+                      O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC),
+                      0644);
             if (fd == -1) {
-                std::cerr << "Error opening file" << std::endl;
-                return 1;
-            }
-            args[i] = nullptr;
-            break;
-        }
-
-        if (strcmp(args[i], ">>") == 0) {
-            if (args[i + 1] == nullptr) {
-                std::cerr << "Error: missing file name after '>>'" << std::endl;
-                return 1;
-            }
-            fd = open(args[i + 1], O_WRONLY | O_CREAT | O_APPEND, 0644);
-            if (fd == -1) {
-                std::cerr << "Error opening file" << std::endl;
+                if (!silent_mode)
+                    std::cerr << "Error opening file '" << args[i + 1]
+                              << "': " << strerror(errno) << std::endl;
                 return 1;
             }
             args[i] = nullptr;
@@ -41,20 +36,34 @@ int exec_cmd(std::vector<char*>& args) {
         }
     }
 
+    const char* old_path = getenv("PATH");
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) != nullptr) {
+        std::string new_path = std::string(cwd);
+        if (old_path) {
+            new_path += ":" + std::string(old_path);
+        }
+        setenv("PATH", new_path.c_str(), 1);
+    }
+
     int pid = fork();
     if (pid < 0) {
-        std::cerr << "Error while fork" << std::endl;
+        if (!silent_mode)
+            std::cerr << "Error: fork failed: " << strerror(errno) << std::endl;
         return 1;
     }
     if (pid == 0) {
         if (fd != -1) {
             if (dup2(fd, 1) == -1) {
-                std::cerr << "Fail opening file" << std::endl;
+                if (!silent_mode)
+                    std::cerr << "Error redirecting output: " << strerror(errno) << std::endl;
             }
             close(fd);
         }
         execvp(args[0], args.data());
-        std::cerr << "Error while exec" << std::endl;
+        if (!silent_mode)
+            std::cerr << "Error executing '" << args[0]
+                      << "': " << strerror(errno) << std::endl;
         exit(1);
     } 
     else {
@@ -84,11 +93,17 @@ int single_cmd(const std::string &cmd) {
     return result;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
+    for (int i = 1; i < argc; ++i) {
+        if (strcmp(argv[i], "--silent") == 0 || strcmp(argv[i], "-s") == 0) {
+            silent_mode = true;
+        }
+    }
+
     std::string line;
 
     while (true) {
-        std::cout << "shell> ";
+        if (!silent_mode) std::cout << "shell> " << std::flush;
         std::getline(std::cin, line);
         if (line == "exit") { break; }
         if (line.empty()) { continue; }
@@ -118,26 +133,21 @@ int main() {
                     break;
                 }
             }
-            
-            //trim
+
             std::string cmd = line.substr(pos, next - pos);
-            while (cmd.empty() == 0 && cmd[0] == ' ') {
-                cmd.erase(0, 1);
-            }
-            while (cmd.empty() == 0 && cmd[cmd.size() - 1] == ' ') {
-                cmd.erase(cmd.size() - 1, 1);
+            while (!cmd.empty() && cmd[0] == ' ') cmd.erase(0, 1);
+            while (!cmd.empty() && cmd.back() == ' ') cmd.pop_back();
+
+            if (!cmd.empty()) {
+                bool execute = true;
+                if (prev_op == "&&" && last_status != 0)  execute = false;
+                if (prev_op == "||" && last_status == 0) execute = false;
+                if (execute) last_status = single_cmd(cmd);
             }
 
-            if (cmd.empty() == 0) {
-                bool tmp = true;
-                if (prev_op == "&&" && last_status != 0)  { tmp = false; }
-                if (prev_op == "||" && last_status == 0) { tmp = false; }
-                if (tmp) { last_status = single_cmd(cmd); }
-            }
-
-            if (op == "&&" || op == "||") { pos = next + 2; }
-            else if (op == ";") { pos = next + 1; }
-            else { pos = line.size(); }
+            if (op == "&&" || op == "||") pos = next + 2;
+            else if (op == ";") pos = next + 1;
+            else pos = line.size();
 
             prev_op = op;
         }
