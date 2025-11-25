@@ -1,16 +1,14 @@
-all: demo-application
-
-parallel_scheduler.o: parallel_scheduler.cpp
-	g++ -fPIC -c parallel_scheduler.cpp -o parallel_scheduler.o
-
-parallel_scheduler.so: parallel_scheduler.o
-	g++ -shared -o parallel_scheduler.so parallel_scheduler.o -lpthread
+demo-application: main.o libparallel_scheduler.so
+	g++ -o demo-application main.o -L. -lparallel_scheduler -lpthread -Wl,-rpath,.
 
 main.o: main.cpp
-	g++ -c main.cpp -o main.o
+	g++ -c main.cpp
 
-demo-application: main.o parallel_scheduler.so
-	g++ main.o ./parallel_scheduler.so -lpthread -o demo-application
+libparallel_scheduler.so: parallel_scheduler.o
+	g++ -shared -o libparallel_scheduler.so parallel_scheduler.o -lpthread
+
+parallel_scheduler.o: parallel_scheduler.cpp
+	g++ -c -fPIC parallel_scheduler.cpp
 
 clean:
 	rm -f *.o *.so demo-application
