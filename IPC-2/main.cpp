@@ -4,11 +4,14 @@
 #include <string>
 
 int prime(int m) {
+    if (m <= 0 || m > 100) {
+        return -1;
+    }
     int res = 2, count  = 1;
     bool isPrime;
     while(true) {
         isPrime = true;
-        for (int i = 2; i < res; i++) {
+        for (int i = 2; i * i <= res; i++) {
             if (res % i == 0) {
                 isPrime = false;
                 break;
@@ -49,14 +52,24 @@ int main()
             }
             
             int m = std::stoi(input);
+            if (m <= 0 || m > 100) {
+                std::cout << "[Parent] Input must be > 0 and <= 100" << std::endl;
+                continue;
+            }
 
             std::cout << "[Parent] Sending " << m << " to the child process..." << std::endl;
-            write(toChild[1], &m, sizeof(m));
+            if (write(toChild[1], &m, sizeof(m)) < 0) {
+                perror("failed write to child");
+                return 1;
+            }
 
             int res;
             std::cout << "[Parent] Waiting for the response from the child process..." << std::endl;
-            read(toParent[0], &res, sizeof(res));
-
+            if (read(toParent[0], &res, sizeof(res)) < 0) {
+                perror("failed read to parent");
+                return 1;
+            }
+            
             std::cout << "Received calculation result of prime(" << m << ") = " << res << "..." << std::endl;
             
         }
@@ -72,15 +85,23 @@ int main()
         
         while (true) {
             int m;
-
-            if (read(toChild[0], &m, sizeof(m)) == 0) {
+            
+            int r = read(toChild[0], &m, sizeof(m));
+            if (r < 0) {
+                perror("failed read to child");
+                return 1;
+            }
+            else if (r == 0) {
                 break;
             }
 
             std::cout << "[Child] Calculating " << m << "-th prime number..." << std::endl;
             int res = prime(m);
             std::cout << "[Child] Sending calculation result of prime(" << m << ")..." << std::endl;
-            write(toParent[1], &res, sizeof(res));
+            if (write(toParent[1], &res, sizeof(res)) < 0) {
+                perror("failed write to parent");
+                return 1;
+            }
         }
         
         close(toChild[0]); 
