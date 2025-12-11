@@ -57,12 +57,6 @@ public:
             perror("fstat failed");
             exit(EXIT_FAILURE);
         }
-        if (sb.st_size == 0) {
-            if (ftruncate(fd, sizeof(int) * size) < 0) {
-                perror("ftruncate failed");
-                exit(EXIT_FAILURE);
-            }
-        }
 
         data = (int*)mmap(nullptr, sizeof(int) * size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
         if (data == MAP_FAILED) {
@@ -74,9 +68,7 @@ public:
 
         sem = sem_open(("/" + name + "_sem").c_str(), O_CREAT, 0644, 1);
         if (sem == SEM_FAILED) {
-            perror("sem_open failed");
-            if (created) { shm_unlink(("/" + name).c_str()); }
-            close(fd); 
+            perror("sem_open failed"); 
             exit(EXIT_FAILURE);
         }
     }
