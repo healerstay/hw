@@ -8,6 +8,10 @@
 #include <string>
 #include <iostream>
 #include <atomic>
+#include <unordered_map>
+#include <vector>
+#include <sstream>
+#include <algorithm>
 
 SharedDB* db = nullptr;        
 sem_t* mutex = nullptr;                  
@@ -78,7 +82,7 @@ void writer_lock_func() { sem_wait(write_lock); }
 void writer_unlock_func() { sem_post(write_lock); } 
 
 void init_aof() { 
-    aof_fd = open("appendonly.aof", O_CREAT | O_RDWR | O_APPEND, 0666); 
+    aof_fd = open("aof", O_CREAT | O_RDWR | O_APPEND, 0666); 
     if (aof_fd == -1) {
         std::cerr << "failed to aof\n";
         exit(1);
@@ -98,7 +102,7 @@ void aof_flush_thread() {
 }
 
 void load_aof() { 
-    std::ifstream file("appendonly.aof"); 
+    std::ifstream file("aof"); 
     if (!file.is_open()) {
         std::cerr << "failed to open aof\n";
         return;
@@ -140,26 +144,93 @@ void load_aof() {
 
 void aof_compact_thread() {
     while (running) {
-        sleep(10);
+        sleep(15);
 
-        std::string tmp_file = "appendonly.aof.tmp";
-        int fd = open(tmp_file.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0666);
+        int fd = open("aof", O_RDWR);
         if (fd == -1) continue;
 
-        writer_lock_func();
-        for (int i = 0; i < MAX_ENTRIES; i++) {
-            if (db->entries[i].used) {
-                std::string line = "SET " + std::string(db->entries[i].key) +
-                                    " " + std::string(db->entries[i].value) + "\n";
-                write(fd, line.c_str(), line.size());
-            }
+        struct stat st;
+        if (fstat(fd, &st) == -1) {
+            close(fd);
+            continue;
         }
+
+        size_t size = st.st_size;
+        if (size == 0) {
+            close(fd);
+            continue;
+        }
+
+        char* buffer = new char[size + 1];
+        ssize_t r = read(fd, buffer, size);
+        if (r <= 0) {
+            delete[] buffer;
+            close(fd);
+            continue;
+        }
+        buffer[r] = '\0';
+
+        std::unordered_set<std::string> seen;
+        std::vector<std::string> result_lines;
+
+        ssize_t i = r - 1;
+
+        while (i >= 0) {
+            ssize_t end = i;
+
+            while (i >= 0 && buffer[i] != '\n') i--;
+            ssize_t start = i + 1;
+
+            if (end < start) {
+                i--;
+                continue;
+            }
+
+            std::string line(buffer + start, end - start + 1);
+
+            if (line.compare(0, 4, "SET ") == 0) {
+                size_t p1 = line.find(' ', 4);
+                if (p1 == std::string::npos) {
+                    i--;
+                    continue;
+                }
+
+                std::string key = line.substr(4, p1 - 4);
+
+                if (seen.insert(key).second) {  // true if new key
+                    result_lines.push_back(line + "\n");
+                }
+            } else if (line.compare(0, 4, "DEL ") == 0) {
+                std::string key = line.substr(4);
+                seen.insert(key);
+            }
+
+            i--;
+        }
+
+        delete[] buffer;
+
+        std::string compacted;
+        for (int j = result_lines.size() - 1; j >= 0; --j) {
+            compacted += result_lines[j];
+        }
+
+        writer_lock_func();
+
+        lseek(fd, 0, SEEK_SET);
+        size_t written = 0;
+        while (written < compacted.size()) {
+            ssize_t w = write(fd, compacted.c_str() + written, compacted.size() - written);
+            if (w <= 0) break;
+            written += w;
+        }
+        ftruncate(fd, (off_t)written);
+
         writer_unlock_func();
 
         close(fd);
-        rename(tmp_file.c_str(), "appendonly.aof");
     }
-}
+}  
 
 void cleanup() { 
     running = false; 

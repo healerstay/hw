@@ -28,10 +28,55 @@ void set_nonblocking(int sock) {
     }
 }
 
+std::string encode(const std::vector<std::string>& strs) {
+    if (strs.empty()) return "";
+
+    std::string res;
+
+    for (const std::string& s : strs) {
+        res += std::to_string(s.size()) + ",";
+    }
+    res += "#";
+    for (const std::string& s : strs) {
+        res += s;
+    }
+
+    return res;
+}
+
+std::vector<std::string> decode(const std::string& s) {
+    if (s.empty()) return {};
+
+    std::vector<int> sizes;
+    std::vector<std::string> res;
+
+    int i = 0;
+    while (s[i] != '#') {
+        std::string cur;
+        while (s[i] != ',') {
+            cur += s[i];
+            i++;
+        }
+        sizes.push_back(std::stoi(cur));
+        i++;
+    }
+    i++;
+    for (int sz : sizes) {
+        res.push_back(s.substr(i, sz));
+        i += sz;
+    }
+
+    return res;
+}
+
 void send_response(int client_fd, const std::string& response) {
+    std::vector<std::string> msgs = {response};
+    std::string encoded = encode(msgs);
+
     size_t total = 0;
-    while (total < response.size()) {
-        ssize_t sent = send(client_fd, response.c_str() + total, response.size() - total, 0);
+    while (total < encoded.size()) {
+        ssize_t sent = send(client_fd, encoded.c_str() + total, encoded.size() - total, 0);
+
         if (sent > 0) total += sent;
         else if (sent == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;
         else { 
@@ -154,16 +199,15 @@ void handle_client(int client_fd) {
     while (true) {
         ssize_t n = read(client_fd, buf, BUF_SIZE);
         if (n > 0) {
-            std::string input(buf, n);
-            size_t start = 0;
-            while (true) {
-                size_t end = input.find('\n', start);
-                if (end == std::string::npos) break;
-                std::string line = input.substr(start, end - start);
-                process_command(client_fd, line);
-                start = end + 1;
+            std::string encoded(buf, n);
+
+            std::vector<std::string> commands = decode(encoded);
+
+            for (const std::string& cmd : commands) {
+                process_command(client_fd, cmd);
             }
-        } else if (n == 0) { 
+        } 
+        else if (n == 0) { 
             close(client_fd); 
             {
                 std::lock_guard<std::mutex> lock(clients_mutex);
