@@ -24,3 +24,5 @@ run-client: client
 
 clean:
 	rm -f *.o server client appendonly.aof
+
+.PHONY: run run-client clean server client

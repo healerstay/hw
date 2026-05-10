@@ -46,6 +46,7 @@ int main() {
         std::string cmd;
         std::getline(std::cin, cmd);
 
+        cmd += "\n";
         send(sock, cmd.c_str(), cmd.size(), 0);
 
         char buf[4096];
