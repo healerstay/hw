@@ -9,6 +9,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <mutex>
+#include <vector>
 
 extern std::atomic<bool> server_running;
 extern std::atomic<bool> running;
@@ -205,7 +206,7 @@ void handle_client(int client_fd) {
                 size_t end = input.find('\n', start);
                 if (end == std::string::npos) break;
                 std::string line = input.substr(start, end - start);
-                procesqs_command(client_fd, line);
+                process_command(client_fd, line);
                 start = end + 1;
             }
         } 

@@ -12,6 +12,7 @@
 #include <vector>
 #include <sstream>
 #include <algorithm>
+#include <unordered_set>
 
 SharedDB* db = nullptr;        
 sem_t* mutex = nullptr;                  
