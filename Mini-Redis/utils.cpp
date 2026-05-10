@@ -199,12 +199,14 @@ void handle_client(int client_fd) {
     while (true) {
         ssize_t n = read(client_fd, buf, BUF_SIZE);
         if (n > 0) {
-            std::string encoded(buf, n);
-
-            std::vector<std::string> commands = decode(encoded);
-
-            for (const std::string& cmd : commands) {
-                process_command(client_fd, cmd);
+            std::string input(buf, n);
+            size_t start = 0;
+            while (true) {
+                size_t end = input.find('\n', start);
+                if (end == std::string::npos) break;
+                std::string line = input.substr(start, end - start);
+                procesqs_command(client_fd, line);
+                start = end + 1;
             }
         } 
         else if (n == 0) { 
