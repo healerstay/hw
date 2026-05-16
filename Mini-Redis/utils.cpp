@@ -45,31 +45,6 @@ std::string encode(const std::vector<std::string>& strs) {
     return res;
 }
 
-std::vector<std::string> decode(const std::string& s) {
-    if (s.empty()) return {};
-
-    std::vector<int> sizes;
-    std::vector<std::string> res;
-
-    int i = 0;
-    while (s[i] != '#') {
-        std::string cur;
-        while (s[i] != ',') {
-            cur += s[i];
-            i++;
-        }
-        sizes.push_back(std::stoi(cur));
-        i++;
-    }
-    i++;
-    for (int sz : sizes) {
-        res.push_back(s.substr(i, sz));
-        i += sz;
-    }
-
-    return res;
-}
-
 void send_response(int client_fd, const std::string& response) {
     std::vector<std::string> msgs = {response};
     std::string encoded = encode(msgs);
@@ -101,7 +76,19 @@ void process_command(int client_fd, const std::string& request) {
         if (second == std::string::npos) response = "Error\n";
         else {
             std::string key = rest.substr(0, second);
-            std::string value = rest.substr(second + 1);
+            std::string remaining = rest.substr(second + 1);
+
+            std::string value;
+            int ttl = -1;
+
+            size_t ex_pos = remaining.find(" EX ");
+            if (ex_pos != std::string::npos) {
+                value = remaining.substr(0, ex_pos);
+
+                std::string ttl_str = remaining.substr(ex_pos + 4);
+                ttl = std::stoi(ttl_str);
+            }
+            else value = remaining;
 
             writer_lock_func();
             for (int i = 0; i < MAX_ENTRIES; i++) {
@@ -109,11 +96,15 @@ void process_command(int client_fd, const std::string& request) {
                     strncpy(db->entries[i].key, key.c_str(), KEY_SIZE);
                     strncpy(db->entries[i].value, value.c_str(), VALUE_SIZE);
                     db->entries[i].used = true;
+                    if (ttl == -1) db->entries[i].expire_at = 0;
+                    else db->entries[i].expire_at = time(nullptr) + ttl;                    
                     break;
                 } else if (strcmp(db->entries[i].key, key.c_str()) == 0) {
                     strncpy(db->entries[i].key, key.c_str(), KEY_SIZE);
                     strncpy(db->entries[i].value, value.c_str(), VALUE_SIZE);
                     db->entries[i].used = true;
+                    if (ttl == -1) db->entries[i].expire_at = 0;
+                    else db->entries[i].expire_at = time(nullptr) + ttl; 
                     break;
                 }
             }
@@ -128,6 +119,11 @@ void process_command(int client_fd, const std::string& request) {
         bool found = false;
         for (int i = 0; i < MAX_ENTRIES; i++) {
             if (db->entries[i].used && strcmp(db->entries[i].key, rest.c_str()) == 0) {
+                if (db->entries[i].expire_at != 0 && 
+                    time(nullptr) >= db->entries[i].expire_at) {
+                    db->entries[i].used = false;
+                    continue;
+                }
                 response = std::string(db->entries[i].value) + "\n";
                 found = true;
                 break;
@@ -171,6 +167,7 @@ void process_command(int client_fd, const std::string& request) {
         response =
             "AVAILABLE COMMANDS:\n"
             "SET key value   -> store value\n"
+            "SET key value EX ttl  -> store value with expiration\n"
             "GET key         -> get value\n"
             "DEL key         -> delete key\n"
             "KEYS            -> list all keys\n"
@@ -195,7 +192,7 @@ void process_command(int client_fd, const std::string& request) {
     send_response(client_fd, response);
 }
 
-void handle_client(int client_fd) {
+void handle_client(int epoll_fd, int client_fd) {
     char buf[BUF_SIZE];
     while (true) {
         ssize_t n = read(client_fd, buf, BUF_SIZE);
@@ -218,7 +215,10 @@ void handle_client(int client_fd) {
             }
             break; 
         }
-        else if (errno == EAGAIN || errno == EWOULDBLOCK) break;
+        else if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            reset_oneshot(epoll_fd, client_fd);
+            break;
+        }
         else { 
             close(client_fd); 
             {

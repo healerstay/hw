@@ -6,6 +6,7 @@
 #include <string>
 #include <set>
 #include <mutex>
+#include <ctime>
 
 #define MAX_ENTRIES 1024
 #define KEY_SIZE 64
@@ -15,6 +16,8 @@ struct Entry {
     char key[KEY_SIZE];
     char value[VALUE_SIZE];
     bool used;
+
+    time_t expire_at;
 };
 
 struct SharedDB {
@@ -44,6 +47,7 @@ void writer_unlock_func();
 
 void append_to_aof(const std::string& cmd);
 void aof_flush_thread();
+void expiration_thread();
 void aof_compact_thread();    
 
 void cleanup();

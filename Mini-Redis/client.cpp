@@ -39,23 +39,19 @@ int main() {
     server.sin_port = htons(1234);
 
     inet_pton(AF_INET, "127.0.0.1", &server.sin_addr);
-
     connect(sock, (sockaddr*)&server, sizeof(server));
 
     while (true) {
         std::string cmd;
         std::getline(std::cin, cmd);
-
         cmd += "\n";
         send(sock, cmd.c_str(), cmd.size(), 0);
 
         char buf[4096];
         int n = recv(sock, buf, sizeof(buf), 0);
-
         if (n <= 0)  break;
 
         std::string encoded(buf, n);
-
         std::vector<std::string> msgs = decode(encoded);
 
         for (const std::string& s : msgs) {

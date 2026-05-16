@@ -102,6 +102,25 @@ void aof_flush_thread() {
     }
 }
 
+void expiration_thread() {
+    while (running) {
+        sleep(1);
+
+        writer_lock_func();
+
+        time_t now = time(nullptr);
+
+        for (int i = 0; i < MAX_ENTRIES; i++) {
+            if (db->entries[i].used && db->entries[i].expire_at != 0 &&
+                now >= db->entries[i].expire_at) {
+                db->entries[i].used = false;
+            }
+        }
+        
+        writer_unlock_func();
+    }
+}
+
 void load_aof() { 
     std::ifstream file("aof"); 
     if (!file.is_open()) {
@@ -129,12 +148,14 @@ void load_aof() {
                     strncpy(db->entries[i].key, key.c_str(), KEY_SIZE);
                     strncpy(db->entries[i].value, value.c_str(), VALUE_SIZE);
                     db->entries[i].used = true;
+                    db->entries[i].expire_at = 0;
                     break;
                 } else {
                     if (strcmp(db->entries[i].key, key.c_str()) == 0) {
                         strncpy(db->entries[i].key, key.c_str(), KEY_SIZE);
                         strncpy(db->entries[i].value, value.c_str(), VALUE_SIZE);
                         db->entries[i].used = true;
+                        db->entries[i].expire_at = 0;
                         break;
                     }
                 }

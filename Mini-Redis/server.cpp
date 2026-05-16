@@ -10,10 +10,15 @@
 #include <atomic>
 #include <set>
 #include <mutex>
+#include <queue>
+#include <condition_variable>
 
 std::set<int> clients;
 std::mutex clients_mutex; 
 std::atomic<bool> server_running(true);
+std::queue<std::pair<int,int>> task_queue;
+std::mutex queue_mutex;
+std::condition_variable queue_cv;
 
 #define PORT 1234
 #define MAX_EVENTS 10
@@ -21,7 +26,35 @@ std::atomic<bool> server_running(true);
 void set_nonblocking(int sock);
 void send_response(int client_fd, const std::string& response);
 void process_command(int client_fd, const std::string& request);
-void handle_client(int client_fd);
+void handle_client(int epoll_fd, int client_fd);
+
+void worker_thread() {
+    while (server_running) {
+        int epoll_fd;
+        int client_fd;
+        {
+            std::unique_lock<std::mutex> lock(queue_mutex);
+
+            while (task_queue.empty() && server_running) {
+                queue_cv.wait(lock);
+            }
+
+            if (!server_running) return;
+
+            epoll_fd = task_queue.front().first;
+            client_fd = task_queue.front().second;
+            task_queue.pop();
+        }
+        handle_client(epoll_fd, client_fd);
+    }
+}
+
+void reset_oneshot(int epoll_fd, int fd) {
+    epoll_event ev{};
+    ev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
+    ev.data.fd = fd;
+    epoll_ctl(epoll_fd, EPOLL_CTL_MOD, fd, &ev);
+}
 
 int main() {
     init_shared_memory();
@@ -29,8 +62,14 @@ int main() {
     init_aof();
     load_aof();
 
+    std::vector<std::thread> pool;
+    for (int i = 0; i < 4; i++) {
+        pool.emplace_back(worker_thread);
+    }
+
     std::thread flush_thread(aof_flush_thread);
     std::thread compact_thread(aof_compact_thread);
+    std::thread ttl_thread(expiration_thread);
 
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (server_fd < 0) { 
@@ -98,7 +137,7 @@ int main() {
                         clients.insert(client_fd);
                     }
                     epoll_event cev{};
-                    cev.events = EPOLLIN | EPOLLET;
+                    cev.events = EPOLLIN | EPOLLET | EPOLLONESHOT;
                     cev.data.fd = client_fd;
 
                     if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &cev) < 0) {
@@ -107,17 +146,27 @@ int main() {
                     }
                 }
             } else {
-                handle_client(events[i].data.fd);
+                //handle_client(events[i].data.fd);
+                {
+                    std::lock_guard<std::mutex> lock(queue_mutex);
+                    task_queue.push({epoll_fd, events[i].data.fd});
+                }
+                queue_cv.notify_one();
             }
         }
     }
 
     server_running = false;
     running = false;
+
     flush_thread.join();
     compact_thread.join();
-    cleanup();
+    ttl_thread.join();
+    for (auto& t : pool) {
+        t.join();
+    }
 
+    cleanup();
     close(server_fd);
     close(epoll_fd);
 
