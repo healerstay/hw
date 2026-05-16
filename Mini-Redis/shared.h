@@ -48,7 +48,8 @@ void writer_unlock_func();
 void append_to_aof(const std::string& cmd);
 void aof_flush_thread();
 void expiration_thread();
-void aof_compact_thread();    
+void aof_compact_thread(); 
+void reset_oneshot(int epoll_fd, int fd);   
 
 void cleanup();
 
